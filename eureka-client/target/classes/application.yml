@@ -1,0 +1,19 @@
+server:
+  port: 8080     # 0 : 随机
+  servlet:
+    context-path: /eureka-client
+  
+spring:
+  application:
+    name: eureka-client
+    
+eureka:
+  client:
+    serviceUrl:
+      defaultZone: ${EUREKA_URI:http://localhost:8761/eureka-server/eureka}
+  instance:
+    preferIpAddress: true
+#    secure-port-enabled: true
+    status-page-url-path: /eureka-client/actuator
+    health-check-url-path: /eureka-client/actuator/health
+    home-page-url-path: /eureka-client/

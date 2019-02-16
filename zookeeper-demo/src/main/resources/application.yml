@@ -1,0 +1,13 @@
+
+
+#spring:
+#  output:
+#    ansi:
+#      enabled: ALWAYS
+#
+#logging: 
+#  level:
+#    root: error
+#    org.apache.curator: error
+#    org.apache.zookeeper.ZooKeeper: error
+#    org.apache.zookeeper.ClientCnxn: error
