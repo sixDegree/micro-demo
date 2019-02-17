@@ -2,6 +2,7 @@
 Thumbs.db
 
 /target/
+/*/target/
 !.mvn/wrapper/maven-wrapper.jar
 .mvn/
 mvnw
