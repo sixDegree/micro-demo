@@ -1,0 +1,21 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /rabbit-demo
+    
+spring:
+  rabbitmq:
+    addresses: localhost:5672
+    username: admin
+    password: admin
+    virtual-host: my_vhost
+    connection-timeout: 15000
+    # add below for consumer:
+    listener:
+      simple:
+        acknowledge-mode: manual
+        prefetch: 1
+        concurrency: 5
+        max-concurrency: 10
+    
+    
