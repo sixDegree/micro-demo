@@ -1,4 +1,4 @@
-package com.cj.rabbit.demo1;
+package com.cj.rabbit.demo;
 
 import java.io.IOException;
 import java.util.UUID;
@@ -9,12 +9,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.junit4.SpringRunner;
 
-import com.cj.rabbit.demo1.entity.Order;
-import com.cj.rabbit.demo1.producer.OrderSender;
+import com.cj.rabbit.demo.entity.Order;
+import com.cj.rabbit.demo.producer.OrderSender;
 
 @RunWith(SpringRunner.class)
 @SpringBootTest
-public class Demo1AppTest{
+public class DemoAppTest{
 	
 	@Autowired
 	private OrderSender orderSender;
@@ -28,11 +28,8 @@ public class Demo1AppTest{
 		orderSender.send(order);
 	}
 	
-//	@Autowired
-//	private OrderReceiver orderReceiver;
-	
 	@Test
-	public void testOrderReceive() throws IOException{
+	public void testOrderReceiver() throws IOException{
 		System.in.read();
 	}
 }

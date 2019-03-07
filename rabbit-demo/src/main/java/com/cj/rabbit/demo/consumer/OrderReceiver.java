@@ -1,4 +1,4 @@
-package com.cj.rabbit.demo1.consumer;
+package com.cj.rabbit.demo.consumer;
 
 import java.util.Map;
 
@@ -12,7 +12,7 @@ import org.springframework.messaging.handler.annotation.Headers;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Component;
 
-import com.cj.rabbit.demo1.entity.Order;
+import com.cj.rabbit.demo.entity.Order;
 import com.rabbitmq.client.Channel;
 
 @Component

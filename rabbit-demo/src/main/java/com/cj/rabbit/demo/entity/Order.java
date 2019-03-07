@@ -1,4 +1,4 @@
-package com.cj.rabbit.demo1.entity;
+package com.cj.rabbit.demo.entity;
 
 import java.io.Serializable;
 

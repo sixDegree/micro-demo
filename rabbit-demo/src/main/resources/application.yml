@@ -10,6 +10,8 @@ spring:
     password: admin
     virtual-host: my_vhost
     connection-timeout: 15000
+    # for confirmCallback:
+    publisher-confirms: true
     # add below for consumer:
     listener:
       simple:

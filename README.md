@@ -7,4 +7,4 @@
 - zookeeper-demo
 - eureka-server,eureka-client
 - zuul-demo
-- radditmq-demo
+- raddit-demo
