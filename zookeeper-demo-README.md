@@ -303,3 +303,484 @@ $ setAcl /node4 digest:tom:3YvKnq60bERLJOlabQFeB1f+/n0=:cdrwa
 + Note:
 	* `setACL()` 需要Admin权限 (Perms.ADMIN)
 	* `getACL()` 无需认权限证
+
+
+## 应用示例
+
+### Description
+
+Two Parts:
+- Part 1: FileServer -> CRUD files
+- Part 2: ClientUser -> Auto download from FileServer / delete local file depends on the files updates on FileServer.
+
+- admin(`/admin`): FileServer
+	+ upload file: POST `/images` -> upload(MultipartFile photo)
+		* save file with name `{image.id}.{image.type}` on local fileLocation 
+		* save file information on DB
+		* add zk node: `/{image.id}_{PERSISTENT_SEQUENTIAL}`: `ADD:{image.id}:{image.type}:{image.originalName}`
+	+ delete file: DEL `images/{id}` -> delete(id)
+		* delete file information on DB
+		* add zk node: `/{image.id}_{PERSISTENT_SEQUENTIAL}`: `DEL:{image.id}:{image.type}:{image.originalName}`
+	+ list all files information: GET `/images` -> list()
+	+ get file information by id: GET `/images/{id}` -> get(id)
+	+ config:
+		* fileLocation: `/Users/cj/space/java/admin-uploads`
+		* zk
+			+ server: 127.0.0.1:2181
+			+ namespace: demo
+
+- user(`/user`): Client User
+	+ get local file: GET `/images/{filename}` -> get(filename)
+	+ zk listen `/`:`CHILD_ADDED`: 
+		* `ADD:{filename}:{extension}:{originalName}` -> download file from fileServer to local,then del this child node
+		* `DEL:{filename}:{extension}:{originalName}` -> delete local file,then del this child node
+	+ config:
+		* local fileLocation `/Users/cj/space/java/user-downloads`
+		* remote fileServer `http://localhost:8080/zookeeper-demo/admin/images`
+		* zk
+			+ server: 127.0.0.1:2181
+			+ namespace: demo
+- verify:
+```bash
+# upload: POST /admin/images
+$ curl -i -F 'photo=@/Users/cj/Pictures/design/极光2.jpg' -X POST http://localhost:8080/zookeeper-demo/admin/images 
+
+# list: GET /admin/images
+$ curl -i -H "Content-Type: application/json" http://localhost:8080/zookeeper-demo/admin/images
+
+# get: GET /admin/images/{id}
+$ curl -i -H "Content-Type: application/json" http://localhost:8080/zookeeper-demo/admin/images/1d0fa647-9dbe-410a-8d9c-0e1c973a98e2
+
+# delete: DELETE /admin/images/{id}
+$ curl -i -H "Content-Type: application/json" -X DELETE http://localhost:8080/zookeeper-demo/admin/images/1d0fa647-9dbe-410a-8d9c-0e1c973a98e2
+
+# visit: 
+# /user/images/1d0fa647-9dbe-410a-8d9c-0e1c973a98e2.jpg
+
+# More (for test)
+# /light.jpg
+# /admin/images
+# /admin/images/test1/虫洞.gif
+# /admin/images/test2/极光1.jpg
+```	
+
+### Dependencies
+
+pom.xml
+
+```xml
+<dependency>
+	<groupId>org.springframework.boot</groupId>
+	<artifactId>spring-boot-starter</artifactId>
+</dependency>
+<dependency>
+	<groupId>org.springframework.boot</groupId>
+	<artifactId>spring-boot-starter-web</artifactId>
+</dependency>
+<dependency>
+	<groupId>org.springframework.boot</groupId>
+	<artifactId>spring-boot-starter-test</artifactId>
+	<scope>test</scope>
+</dependency>
+
+<!-- Curator (include zookeeper) -->
+<!-- Note: need to change zookeeper version,the beta version zookeeper has issues -->
+<dependency>
+	<groupId>org.apache.curator</groupId>
+	<artifactId>curator-recipes</artifactId>
+	<version>4.0.1</version>
+	<exclusions>
+		<exclusion>
+			 <groupId>org.apache.zookeeper</groupId>
+			 <artifactId>zookeeper</artifactId>
+		</exclusion>
+	</exclusions>
+</dependency>
+<dependency>
+	<groupId>org.apache.zookeeper</groupId>
+	<artifactId>zookeeper</artifactId>
+	<version>3.4.6</version>
+	<exclusions>
+		<exclusion>
+			  <groupId>org.slf4j</groupId>
+			  <artifactId>slf4j-api</artifactId>
+		</exclusion>
+		<exclusion>
+			 <groupId>org.slf4j</groupId>
+			 <artifactId>slf4j-log4j12</artifactId>
+		</exclusion>
+	</exclusions>
+</dependency>
+
+<!-- FileUpload -->
+<dependency>
+    <groupId>commons-fileupload</groupId>
+    <artifactId>commons-fileupload</artifactId>
+    <version>1.3.1</version>
+</dependency>
+<dependency>
+    <groupId>commons-io</groupId>
+    <artifactId>commons-io</artifactId>
+    <version>2.5</version>
+</dependency>
+```
+
+### Config
+
+application.yml
+```
+server:
+  port: 8080
+  servlet:
+    context-path: /zookeeper-demo
+  
+zk:
+  server: 127.0.0.1:2181
+  namespace: demo
+
+# for admin part:  
+admin:
+  fileLocation: /Users/cj/space/java/admin-uploads
+
+# for user part:
+user:
+  fileLocation: /Users/cj/space/java/user-downloads
+  fileServer: http://localhost:8080/zookeeper-demo/admin/images
+```
+
+### Admin(FileServer) Part
+
+ImageAdminController.java
+
+```java
+@RestController
+@RequestMapping("/admin/images")
+public class ImageAdminController {
+
+	@Value("${admin.fileLocation}")
+	private String fileLocation;
+	
+	@Autowired
+	private ImageService imageService;
+	
+	@Resource(name="zkService")
+	private ZkCuratorService zkService;
+	
+	@PostMapping
+	public Object upload(@RequestParam(value="photo") MultipartFile photo) throws Exception{
+ 
+		System.out.println("Name:"+photo.getName());							// photo
+		System.out.println("OriginalFilename:"+photo.getOriginalFilename());	// 极光2.jpg
+		System.out.println("Size:"+photo.getSize());							// 186316
+		System.out.println("ContentType:"+photo.getContentType());				// image/jpeg
+		
+        Image image=new Image(UUID.randomUUID().toString(),
+        		photo.getOriginalFilename(),"Active");
+        String destFilePath=this.fileLocation+"/"+image.getId()+"."+image.getType();
+        System.out.println("dest:"+destFilePath);
+        FileUtils.copyToFile(photo.getInputStream(), new File(destFilePath));
+        boolean result=this.imageService.save(image);
+        
+        // zookeeper
+        String data="ADD:"+image.getId()+":"+image.getType()+":"+image.getOriginalName();
+        String zkPath=zkService.create("/"+image.getId(), data.getBytes());
+        System.out.println("create zkPath(for ADD):"+zkPath);
+        
+		return ResponseEntity.ok(result);
+	}
+	
+	@DeleteMapping("/{id}")
+	public Object delete(@PathVariable("id") String id) throws Exception{
+		Image image=this.imageService.delete(id);
+		
+		// zookeeper
+		if(image!=null){
+			String data="DEL:"+image.getId()+":"+image.getType()+":"+image.getOriginalName();
+	        String zkPath=zkService.create("/"+image.getId(), data.getBytes());
+	        System.out.println("create zkPath(for DEL):"+zkPath);
+		}
+        
+		return ResponseEntity.ok(image!=null);
+	}
+	
+	@GetMapping
+	public Object list(){
+		return ResponseEntity.ok(this.imageService.list());
+	}
+	
+	@GetMapping("/{id}")
+	public Object get(@PathVariable("id")String id) throws IOException{
+		Image image=this.imageService.get(id);
+		if(image==null || !"Active".equals(image.getStatus()) 
+				|| StringUtils.isEmpty(image.getType()) || "Unknow".equals(image.getType()))
+			return ResponseEntity.ok("Not Available!");
+		
+		FileInputStream in=new FileInputStream(this.fileLocation+"/"+image.getId()+"."+image.getType());
+		return ResponseEntity.ok()
+				.contentType(MediaType.IMAGE_JPEG)
+				.contentType(MediaType.IMAGE_PNG)
+				.contentType(MediaType.IMAGE_GIF)
+				.body(IOUtils.toByteArray(in));
+	}
+
+	/* ------ For Test: -------- */
+	@GetMapping(value="/test1/{name}"
+			,produces={MediaType.IMAGE_JPEG_VALUE,MediaType.IMAGE_PNG_VALUE,MediaType.IMAGE_GIF_VALUE})
+	public Object getImageByName1(@PathVariable("name") String filename) throws IOException{
+		String filePath="/Users/cj/Pictures/design";
+		FileInputStream in = new FileInputStream(filePath+"/"+filename);
+		return IOUtils.toByteArray(in);	// or ResponseEntity.ok(IOUtils.toByteArray(in));
+	}
+	@GetMapping(value="/test2/{name}")
+	public Object getImageByName2(@PathVariable("name") String filename) throws IOException{
+		String filePath="/Users/cj/Pictures/design";
+		FileInputStream in = new FileInputStream(filePath+"/"+filename);
+		return ResponseEntity.ok()
+				.contentType(MediaType.IMAGE_JPEG)
+				.contentType(MediaType.IMAGE_PNG)
+				.contentType(MediaType.IMAGE_GIF)
+				.body(IOUtils.toByteArray(in));
+	}
+	@PostConstruct
+	private void init() throws Exception{
+		System.out.println("init:"+this.fileLocation);
+		FileUtils.forceMkdir(new File(this.fileLocation));
+		
+		String id="1d0fa647-9dbe-410a-8d9c-0e1c973a98e2";
+    	Image image=new Image(id,"light.jpg","Active");
+    	FileUtils.copyFile(new File("/Users/cj/Pictures/design/极光1.jpg"), new File(this.fileLocation+"/"+id+".jpg"));
+    	this.imageService.save(image);
+    	
+    	// zookeeper
+    	String data="ADD:"+image.getId()+":"+image.getType()+":"+image.getOriginalName();
+        String zkPath=zkService.create("/"+image.getId(), data.getBytes());
+        System.out.println("create zkPath(for ADD):"+zkPath);
+	}
+	@PreDestroy
+	private void clear() throws Exception{
+		FileUtils.cleanDirectory(new File(this.fileLocation));
+		// zookeeper
+		zkService.delete("/");
+	}
+}
+```
+
+### User(ClientUser) Part
+
+ImageUserController
+
+```java
+@RestController
+@RequestMapping("/user/images")
+public class ImageUserController {
+	
+	@Value("${user.fileLocation}")
+	private String fileLocation;
+	
+	@Value("${user.fileServer}")
+	private String fileServer;
+	
+	@Resource(name="zkClientService")
+//	@Resource(name="zkService")
+	private ZkCuratorService zkService;
+	
+	@GetMapping("/{filename}")
+	public Object get(@PathVariable("filename") String filename) throws IOException{
+		FileInputStream in=new FileInputStream(this.fileLocation+"/"+filename);
+		return ResponseEntity.ok()
+				.contentType(MediaType.IMAGE_JPEG)
+				.contentType(MediaType.IMAGE_PNG)
+				.contentType(MediaType.IMAGE_GIF)
+				.body(IOUtils.toByteArray(in));
+	}
+	
+	@PostConstruct
+	public void init() throws Exception{
+		PathChildrenCacheListener listener=new PathChildrenCacheListener(){
+			@Override
+			public void childEvent(CuratorFramework client, PathChildrenCacheEvent event) 
+					throws Exception {
+				System.out.println("Get Event:"+event.getType());
+				
+				if(event.getType().equals(PathChildrenCacheEvent.Type.CHILD_ADDED)){
+					ChildData child=event.getData();
+					if(child==null)
+						return;
+					String data=new String(child.getData());
+					String array[]=data.split(":");
+					String filename= array[1]+"."+array[2];
+					System.out.println(child.getPath()+":"+data);
+					
+					if("ADD".equals(array[0])){
+						try{
+							Thread.sleep(3000);		// ! for test and connect refused exception
+							FileUtils.copyURLToFile(new URL(fileServer+"/"+filename)
+									, new File(fileLocation+"/"+filename));
+							zkService.delete(child.getPath());
+						}catch(ConnectException ex){
+							System.out.println(ex.getMessage());
+						}
+					}else if("DEL".equals(array[0])){
+						try{
+							FileUtils.forceDelete(new File(fileLocation+"/"+filename));
+						}catch(FileNotFoundException ex){
+							System.out.println("not exist:"+fileLocation+"/"+filename);
+						}
+						zkService.delete(child.getPath());
+					}
+				}
+			}
+		};
+		zkService.addPathChildrenWatcher("/", true, listener);
+	}
+	
+	@PreDestroy
+	public void clear() throws Exception{
+		FileUtils.cleanDirectory(new File(this.fileLocation));
+		// zookeeper
+		zkService.delete("/");
+	}
+}
+```
+
+### Common: Service & Entity
+
+1. ImageService
+```java
+@Service
+public class ImageService {
+	private final ConcurrentMap<String,Image> images=new ConcurrentHashMap<String,Image>();
+    
+    public boolean save(Image image){
+        return images.put(image.getId(),image)==null;
+    }
+    public Image delete(String id){
+    	Image image=images.get(id);
+    	if(image==null)
+    		return null;
+    	image.setStatus("InActive");
+    	images.replace(id, image);
+    	return image;
+    }
+    public Image get(String id){
+    	return images.get(id);
+    }
+    public Collection<Image> list(){
+        return images.values();
+    }   
+}
+```
+
+2. ZkCuratorService
+```java
+public class ZkCuratorService {
+
+	private CuratorFramework zkClient;
+	
+	@Value("${zk.server}")
+	private String connectString;
+	
+	@Value("${zk.namespace}")
+	private String namespace;
+
+	private PathChildrenCache childCache;
+	
+	public CuratorFramework getZkClient() {
+		return zkClient;
+	}
+	public void setZkClient(CuratorFramework zkClient) {
+		this.zkClient = zkClient;
+	}
+
+	@PostConstruct
+	public void init(){
+		System.out.println("ZK Service init");
+		RetryPolicy retryPolicy = new ExponentialBackoffRetry(3000, 3);
+		zkClient=CuratorFrameworkFactory.builder()
+				.connectString(connectString)
+				.retryPolicy(retryPolicy)
+				.sessionTimeoutMs(10000)
+				.connectionTimeoutMs(10000)
+				.namespace(namespace)
+				.build();
+		zkClient.start();
+	}
+	@PreDestroy
+	public void close(){
+		if(zkClient!=null)
+			zkClient.close();
+	}
+	public void addPathChildrenWatcher(String watchPath,boolean createIfNotExist,PathChildrenCacheListener listener) throws Exception{
+		if(createIfNotExist){
+			if(zkClient.checkExists().forPath(watchPath)==null){
+				zkClient.create().creatingParentContainersIfNeeded().forPath(watchPath);
+			}
+		}
+		childCache = new PathChildrenCache(zkClient, watchPath, true);
+		System.out.println("Add Listener...");
+		childCache.getListenable().addListener(listener);
+		System.out.println("Start Cache...");
+		childCache.start(StartMode.POST_INITIALIZED_EVENT); 	// 异步初始化 -- initial trigger watcher: Type.INITIALIZED
+	}
+	public String create(String path,byte[] data) throws Exception{
+		return zkClient.create()
+				.creatingParentsIfNeeded()
+				.withMode(CreateMode.PERSISTENT_SEQUENTIAL)
+				.forPath(path,data);
+	}
+	public void delete(String path) throws Exception{
+		zkClient.delete().guaranteed().deletingChildrenIfNeeded().forPath(path);
+	}
+	public Stat update(String path,byte[] data) throws Exception{
+		return zkClient.setData().forPath(path,data);
+	}
+	public Stat checkExists(String path) throws Exception{
+		return zkClient.checkExists().forPath(path);
+	}
+}
+```
+
+3. Entity: Image
+```java
+public class Image {
+	private String id;
+	private String originalName;
+	private String type;
+	private String status;
+	
+	public Image(){}
+	
+	public Image(String id,String originalName,String status){
+		this.id=id;
+		this.originalName=originalName;
+		this.status=status;
+		int pos=originalName.lastIndexOf(".");
+		this.type=(pos!=-1?originalName.substring(pos+1):"Unknow");
+	}
+
+	/* getter & setter .... */
+}
+```
+
+### main
+
+```java
+@SpringBootApplication
+@Configuration
+public class App {
+    public static void main( String[] args ){
+        SpringApplication.run(App.class, args);
+    }
+    
+    @Bean(name="zkService")
+    public ZkCuratorService zkService(){
+    	return new ZkCuratorService();
+    }
+    
+    @Bean(name="zkClientService")
+    public ZkCuratorService zkClientService(){
+    	return new ZkCuratorService();
+    }
+}
+```
+
